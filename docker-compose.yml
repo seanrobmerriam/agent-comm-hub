@@ -1,0 +1,86 @@
+version: '3.8'
+
+services:
+  redis-standard:
+    image: redis:7-alpine
+    container_name: redis-standard
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-standard-data:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+      - agent-network
+
+  redis-pubsub:
+    image: redis:7-alpine
+    container_name: redis-pubsub
+    ports:
+      - "6380:6379"
+    volumes:
+      - redis-pubsub-data:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+      - agent-network
+
+  agent-memory-server:
+    image: ghcr.io/redis/agent-memory-server:latest
+    container_name: agent-memory-server
+    ports:
+      - "8081:8081"
+    environment:
+      - REDIS_URL=redis://redis-standard:6379
+      - LOG_LEVEL=INFO
+    depends_on:
+      redis-standard:
+        condition: service_healthy
+    networks:
+      - agent-network
+
+  agent-comm-hub:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: agent-comm-hub
+    ports:
+      - "8080:8080"
+    environment:
+      - REDIS_STANDARD_URL=redis://redis-standard:6379
+      - REDIS_PUBSUB_URL=redis://redis-pubsub:6379
+      - AGENT_MEMORY_URL=http://agent-memory-server:8081
+      - SERVER_HOST=0.0.0.0
+      - SERVER_PORT=8080
+      - LOG_LEVEL=INFO
+    depends_on:
+      redis-standard:
+        condition: service_healthy
+      redis-pubsub:
+        condition: service_healthy
+      agent-memory-server:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    networks:
+      - agent-network
+
+volumes:
+  redis-standard-data:
+  redis-pubsub-data:
+
+networks:
+  agent-network:
+    driver: bridge
